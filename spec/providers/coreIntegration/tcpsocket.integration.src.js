@@ -5,12 +5,19 @@ var PromiseCompat = require('es6-promise').Promise;
 
 module.exports = function (provider, setup) {
   'use strict';
-  var socket, dispatch;
+  var testObj = {};
 
   beforeEach(function () {
     setup();
-    dispatch = testUtil.createTestPort('msgs');
-    socket = new provider.provider(undefined, dispatch.onMessage.bind(dispatch));
+    testObj.dispatch = testUtil.createTestPort('msgs');
+    testObj.socket = new provider.provider(
+      undefined, testObj.dispatch.onMessage.bind(testObj.dispatch));
+  });
+
+  afterEach(function () {
+    delete testObj.dispatch;
+    delete testObj.socket;
+    console.log(testObj);
   });
 
   function rawStringToBuffer(str) {
@@ -22,25 +29,26 @@ module.exports = function (provider, setup) {
   }
 
   it("Works as a Client", function (done) {
-    socket.connect('www.google.com', 80, function () {
+    testObj.socket.connect('www.google.com', 80, function () {
       var written = false;
-      socket.write(rawStringToBuffer('GET / HTTP/1.0\n\n'), function (okay) {
-        written = true;
-      });
-      dispatch.gotMessageAsync('onData', [], function (msg) {
+      testObj.socket.write(rawStringToBuffer(
+        'GET / HTTP/1.0\n\n'), function (okay) {
+          written = true;
+        });
+      testObj.dispatch.gotMessageAsync('onData', [], function (msg) {
         expect(written).toEqual(true);
-        expect(dispatch.gotMessage('onData', [])).not.toEqual(false);
-        socket.close(done);
+        expect(testObj.dispatch.gotMessage('onData', [])).not.toEqual(false);
+        testObj.socket.close(done);
       });
     });
   });
 
   it("Closes socket and open new one on the same port", function (done) {
-    socket.listen('127.0.0.1', 9981, function () {
-      socket.close(function () {
-        socket.listen('127.0.0.1', 9981, function () {
+    testObj.socket.listen('127.0.0.1', 9981, function () {
+      testObj.socket.close(function () {
+        testObj.socket.listen('127.0.0.1', 9981, function () {
           expect(true).toEqual(true);
-          socket.close(done);
+          testObj.socket.close(done);
         });
       });
     });
@@ -48,23 +56,23 @@ module.exports = function (provider, setup) {
 
   it("Gets info on client & server sockets", function (done) {
     var cspy = jasmine.createSpy('client'),
-      client,
-      onconnect = function () {
-        client.getInfo(function (info) {
-          expect(info.localPort).toBeGreaterThan(1023);
-          PromiseCompat.all([
-            client.close(function () {}),
-            socket.close(function () {}),
-            done()]);
-        });
-      };
+        client,
+        onconnect = function () {
+          client.getInfo(function (info) {
+            expect(info.localPort).toBeGreaterThan(1023);
+            PromiseCompat.all([
+              client.close(function () {}),
+              testObj.socket.close(function () {}),
+              done()]);
+          });
+        };
 
-    socket.getInfo(function (info) {
+    testObj.socket.getInfo(function (info) {
       expect(info.connected).toEqual(false);
       expect(info.localPort).not.toBeDefined();
     });
-    socket.listen('127.0.0.1', 0, function () {
-      socket.getInfo(function (info) {
+    testObj.socket.listen('127.0.0.1', 0, function () {
+      testObj.socket.getInfo(function (info) {
         expect(info.localPort).toBeGreaterThan(1023);
         client = new provider.provider(undefined, cspy);
         client.connect('127.0.0.1', info.localPort, onconnect);
@@ -87,14 +95,15 @@ module.exports = function (provider, setup) {
       expect(evt).toEqual('onData');
       expect(msg.data.byteLength).toEqual(10);
       PromiseCompat.all([ client.close(function () {}),
-                          socket.close(function () {}) ]);
+                          testObj.socket.close(function () {}) ]);
     };
-    dispatch.gotMessageAsync('onConnection', [], function (msg) {
+    testObj.dispatch.gotMessageAsync('onConnection', [], function (msg) {
       expect(msg.socket).toBeDefined();
       onConnectionReceived = true;
-      receiver = new provider.provider(undefined, onDispatch, msg.socket);
+      receiver = new provider.provider(
+        undefined, onDispatch, msg.socket);
     });
-    dispatch.gotMessageAsync('onDisconnect', [], function (msg) {
+    testObj.dispatch.gotMessageAsync('onDisconnect', [], function (msg) {
       expect(onConnectionReceived).toEqual(true);
       PromiseCompat.all([ receiver.close(function () {}),
                           done() ]);
@@ -103,7 +112,7 @@ module.exports = function (provider, setup) {
       var buf = new Uint8Array(10);
       client.write(buf.buffer, function () {});
     };
-    socket.listen('127.0.0.1', 9981, function () {
+    testObj.socket.listen('127.0.0.1', 9981, function () {
       client = new provider.provider(undefined, cspy);
       client.connect('127.0.0.1', 9981, onConnect);
     });
@@ -111,10 +120,10 @@ module.exports = function (provider, setup) {
 
   it("Pauses and resumes", function (done) {
     // TODO: this test breaks in node (runs code after done())
-    socket.connect('www.google.com', 80, function () {
+    testObj.socket.connect('www.google.com', 80, function () {
       var paused = false;
       var pausedMessageCount = 0;
-      dispatch.on('onMessage', function (msg) {
+      testObj.dispatch.on('onMessage', function (msg) {
         if (!msg || !(msg.hasOwnProperty('data'))) {
           // Not an 'onData' message.
           return;
@@ -126,16 +135,16 @@ module.exports = function (provider, setup) {
         }
 
         // Apart from the above exception, check that data doesn't arrive until
-        // after the socket resumes.
+        // after the testObj.socket resumes.
         expect(paused).toEqual(false);
-        socket.close(done);
+        testObj.socket.close(done);
       });
 
-      socket.pause(function () {
+      testObj.socket.pause(function () {
         paused = true;
         // This URL is selected to be a file large enough to generate
         // multiple onData events.
-        socket.write(
+        testObj.socket.write(
           rawStringToBuffer('GET /images/srpr/logo11w.png HTTP/1.0\n\n'),
           function (okay) {});
 
@@ -144,7 +153,7 @@ module.exports = function (provider, setup) {
         setTimeout(function () {
           // The observed behavior is that the next packet is received after
           // the call to resume, but before resume returns.
-          socket.resume(function () {});
+          testObj.socket.resume(function () {});
           paused = false;
         }, 1000);
       });
@@ -153,11 +162,11 @@ module.exports = function (provider, setup) {
 
   it("Secures a socket", function (done) {
     // TODO - prepareSecure test, if Chrome isn't fixing that soon
-    socket.connect('www.google.com', 443, function () {
-      socket.secure(function() {
-        socket.getInfo(function (info) {
+    testObj.socket.connect('www.google.com', 443, function () {
+      testObj.socket.secure(function() {
+        testObj.socket.getInfo(function (info) {
           expect(info.connected).toEqual(true);
-          PromiseCompat.all([socket.close(function () {}),
+          PromiseCompat.all([testObj.socket.close(function () {}),
                              done()]);
         });
       });
@@ -165,41 +174,41 @@ module.exports = function (provider, setup) {
   });
 
   it("Gives error when securing a disconnected socket", function(done) {
-    socket.secure(function (success, err) {
+    testObj.socket.secure(function (success, err) {
       expect(err.errcode).toEqual('NOT_CONNECTED');
       done();
     });
   });
 
   it("Gives error when connecting to invalid domain", function (done) {
-    socket.connect('www.domainexiststobreakourtests.gov', 80,
-                   function (success, err) {
-                     var allowedErrors = ['CONNECTION_FAILED',
-                                          'NAME_NOT_RESOLVED'];
-                     expect(allowedErrors).toContain(err.errcode);
-                     done();
-                   });
+    testObj.socket.connect('www.domainexiststobreakourtests.gov', 80,
+                           function (success, err) {
+                             var allowedErrors = ['CONNECTION_FAILED',
+                                                  'NAME_NOT_RESOLVED'];
+                             expect(allowedErrors).toContain(err.errcode);
+                             done();
+                           });
   });
 
   it("Gives error when writing a disconnected socket", function(done) {
-    socket.write(rawStringToBuffer(''), function (success, err) {
+    testObj.socket.write(rawStringToBuffer(''), function (success, err) {
       expect(err.errcode).toEqual('NOT_CONNECTED');
       done();
     });
   });
 
   it("Gives error when closing a disconnected socket", function(done) {
-    socket.close(function (success, err) {
-      expect(err.errcode).toEqual('SOCKET_CLOSED');
+    testObj.socket.close(function (success, err) {
+      expect(err.errcode).toEqual('TESTOBJ.SOCKET_CLOSED');
       done();
     });
   });
 
   it("Gives error when listening on already allocated socket", function(done) {
-    socket.listen('127.0.0.1', 9981, function () {
-      socket.listen('127.0.0.1', 9981, function (success, err) {
+    testObj.socket.listen('127.0.0.1', 9981, function () {
+      testObj.socket.listen('127.0.0.1', 9981, function (success, err) {
         expect(err.errcode).toEqual('ALREADY_CONNECTED');
-        socket.close(done);
+        testObj.socket.close(done);
       });
     });
   });
@@ -209,7 +218,7 @@ module.exports = function (provider, setup) {
         client,
         clientCopy;
 
-    dispatch.gotMessageAsync('onConnection', [], function (msg) {
+    testObj.dispatch.gotMessageAsync('onConnection', [], function (msg) {
       expect(msg.socket).toBeDefined();
       client.close(function () {
         clientCopy = new provider.provider(undefined, function () {},
@@ -221,7 +230,7 @@ module.exports = function (provider, setup) {
         });
       });
     });
-    socket.listen('127.0.0.1', 9981, function () {
+    testObj.socket.listen('127.0.0.1', 9981, function () {
       client = new provider.provider(undefined, cspy);
       client.connect('127.0.0.1', 9981, function () {});
     });
@@ -238,16 +247,16 @@ module.exports = function (provider, setup) {
         receiver;
     var onDispatch = function (evt, msg) {
       expect(evt).toEqual('onDisconnect');
-      socket.close(done);
+      testObj.socket.close(done);
     };
-    dispatch.gotMessageAsync('onConnection', [], function (msg) {
+    testObj.dispatch.gotMessageAsync('onConnection', [], function (msg) {
       expect(msg.socket).toBeDefined();
       receiver = new provider.provider(undefined, onDispatch, msg.socket);
       client.close(function () {});
     });
 
-    socket.listen('127.0.0.1', 0, function () {
-      socket.getInfo(function (info) {
+    testObj.socket.listen('127.0.0.1', 0, function () {
+      testObj.socket.getInfo(function (info) {
         client = new provider.provider(undefined, cspy);
         client.connect('127.0.0.1', info.localPort, function () {});
       });
