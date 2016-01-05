@@ -2,6 +2,55 @@
 /*jslint indent:2, white:true, node:true, sloppy:true, browser:true */
 var Link = require('../link');
 
+/* Object to keep track of worker stats */
+var workers = {};
+
+/* Log worker stats */
+function logWorker(id){
+    console.log('worker id: ' + id + ', transfer time: ' + workers[id].average.toFixed(3) +
+        'ms, messages per second: ' + workers[id].mps);
+}
+
+var intervalSeconds = 5;
+
+/** Update messages per second and log worker stats at intervalSeconds **/
+setInterval(function(){
+  for (var id in workers){
+    if (workers.hasOwnProperty(id)){
+      workers[id].mps = workers[id].currentCount/intervalSeconds;
+      workers[id].average = workers[id].sum/workers[id].currentCount;
+      workers[id].currentCount = 0;
+      workers[id].sum = 0;
+      if(workers[id].mps > 0){
+        logWorker(id);
+      }
+    }
+  }
+}, intervalSeconds * 1000);
+
+/** Floating point milliseconds since browser opened **/
+function getTime(){
+  return this.performance.now();
+}
+
+/** Update average message transfer time for current worker every time a message
+ * is received**/
+function updateTransferTime(msg, workerId){
+  if(!(workerId in workers)){
+    workers[workerId] = {'average': 0, 'sum': 0, 'currentCount': 0, 'mps': 0};
+  }
+
+  var worker = workers[workerId];
+  var transferTime = getTime() - msg.data.timeSent;
+  worker.sum += transferTime;
+  worker.currentCount++;
+
+  if(transferTime > 1000){
+    console.log('**ALERT: HIGH TRANSFER TIME**');
+    console.log('worker id: ' + workerId + ', transfer time: ' + transferTime);
+  }
+}
+
 /**
  * A port providing message transport between two freedom contexts via Worker.
  * @class Worker
@@ -53,7 +102,8 @@ WorkerLink.prototype.toString = function() {
  * @method setupListener
  */
 WorkerLink.prototype.setupListener = function() {
-  var onMsg = function(msg) {
+  var onMsg = function(msg){
+    updateTransferTime(msg, this.id);
     this.emitMessage(msg.data.flow, msg.data.message);
   }.bind(this);
   this.obj = this.config.global;
@@ -75,7 +125,6 @@ WorkerLink.prototype.setupWorker = function() {
     blob,
     self = this;
   worker = new Worker(this.config.source + '#' + this.id);
-
   worker.addEventListener('error', function(err) {
     this.onError(err);
   }.bind(this), true);
@@ -85,6 +134,7 @@ WorkerLink.prototype.setupWorker = function() {
       this.emit('started');
       return;
     }
+    updateTransferTime(msg, this.id);
     this.emitMessage(msg.data.flow, msg.data.message);
   }.bind(this, worker), true);
   this.stop = function() {
@@ -107,13 +157,17 @@ WorkerLink.prototype.deliverMessage = function(flow, message) {
       message.channel === 'control') {
     this.stop();
   } else {
+    var now = getTime();
     if (this.obj) {
+      var idString = now.toString();
+      var id = idString.substr(idString.length - 6);
       this.obj.postMessage({
         flow: flow,
-        message: message
+        message: message,
+        timeSent: now
       });
     } else {
-      this.once('started', this.onMessage.bind(this, flow, message));
+      this.once('started', this.onMessage.bind(this, flow, message, now));
     }
   }
 };
