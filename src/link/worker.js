@@ -13,7 +13,10 @@ function logWorker(id){
 
 var intervalSeconds = 5;
 
-/** Update messages per second and log worker stats at intervalSeconds **/
+/**
+ * Update average transfer time and messages per second at intervalSeconds; log
+ * workers that have activity
+ * */
 setInterval(function(){
   for (var id in workers){
     if (workers.hasOwnProperty(id)){
@@ -28,13 +31,12 @@ setInterval(function(){
   }
 }, intervalSeconds * 1000);
 
-/** Floating point milliseconds since browser opened **/
+/* Floating point milliseconds since browser opened */
 function getTime(){
   return this.performance.now();
 }
 
-/** Update average message transfer time for current worker every time a message
- * is received**/
+/* Update count of messages and sum of times for current worker every time a message is received */
 function updateTransferTime(msg, workerId){
   if(!(workerId in workers)){
     workers[workerId] = {'average': 0, 'sum': 0, 'currentCount': 0, 'mps': 0};
