@@ -5,48 +5,70 @@ var Link = require('../link');
 /* Object to keep track of worker stats */
 var workers = {};
 
-/* Log worker stats */
-function logWorker(id){
-    console.log('worker id: ' + id + ', transfer time: ' + workers[id].average.toFixed(3) +
-        'ms, messages per second: ' + workers[id].mps);
-}
-
+/* Seconds until we update and log stats */
 var intervalSeconds = 5;
 
-/**
- * Update average transfer time and messages per second at intervalSeconds; log
- * workers that have activity
- * */
+/* Update messages per second and log worker stats at intervalSeconds */
 setInterval(function(){
   for (var id in workers){
     if (workers.hasOwnProperty(id)){
-      workers[id].mps = workers[id].currentCount/intervalSeconds;
-      workers[id].average = workers[id].sum/workers[id].currentCount;
-      workers[id].currentCount = 0;
-      workers[id].sum = 0;
-      if(workers[id].mps > 0){
-        logWorker(id);
+      if(workers[id].currentCount > 0){
+        var messageRate = workers[id].currentCount/intervalSeconds;
+        var variance = 0;
+        if(workers[id].currentCount > 1){
+          variance = workers[id].s_k/(workers[id].currentCount - 1);
+        }
+        var stdev = Math.sqrt(variance);
+
+        console.log(
+            'worker id: ' + id +
+            ', mean transfer time: ' + workers[id].newMean.toFixed(3) +
+            ', messages per second: ' + messageRate +
+            ', max: ' + workers[id].max.toFixed(3) +
+            ', variance: ' + variance.toFixed(3) +
+            ', standard deviation: ' + stdev.toFixed(3)
+            );
+
+        // Reset values
+        workers[id].max = 0;
+        workers[id].currentCount = 0;
+        workers[id].sum = 0;
+        workers[id].s_k = 0.0;
       }
     }
   }
 }, intervalSeconds * 1000);
 
-/* Floating point milliseconds since browser opened */
+/** Floating point milliseconds since browser opened **/
 function getTime(){
   return this.performance.now();
 }
 
-/* Update count of messages and sum of times for current worker every time a message is received */
-function updateTransferTime(msg, workerId){
+/** Update stats with new transfer time for current worker every time a message
+ * is received **/
+function processNewTransferTime(msg, workerId){
   if(!(workerId in workers)){
-    workers[workerId] = {'average': 0, 'sum': 0, 'currentCount': 0, 'mps': 0};
+    workers[workerId] = {'sum': 0, 'max': 0, 'currentCount': 0, 'oldMean': 0, 'newMean': 0, 's_k': 0.0};
   }
 
   var worker = workers[workerId];
   var transferTime = getTime() - msg.data.timeSent;
-  worker.sum += transferTime;
-  worker.currentCount++;
 
+  // Update worker stats
+  worker.currentCount++;
+  worker.sum += transferTime;
+  worker.max = Math.max(worker.max, transferTime);
+
+  // Update variance stats
+  if(worker.currentCount === 1){
+    worker.oldMean = worker.newMean = transferTime;
+  }else{
+    worker.newMean = worker.oldMean + (transferTime - worker.oldMean)/worker.currentCount;
+    worker.s_k = worker.s_k + (transferTime - worker.oldMean)*(transferTime - worker.newMean);
+    worker.oldMean = worker.newMean;
+  }
+
+  // Log high message transfer times
   if(transferTime > 1000){
     console.log('**ALERT: HIGH TRANSFER TIME**');
     console.log('worker id: ' + workerId + ', transfer time: ' + transferTime);
@@ -105,7 +127,7 @@ WorkerLink.prototype.toString = function() {
  */
 WorkerLink.prototype.setupListener = function() {
   var onMsg = function(msg){
-    updateTransferTime(msg, this.id);
+    processNewTransferTime(msg, this.id);
     this.emitMessage(msg.data.flow, msg.data.message);
   }.bind(this);
   this.obj = this.config.global;
@@ -136,7 +158,7 @@ WorkerLink.prototype.setupWorker = function() {
       this.emit('started');
       return;
     }
-    updateTransferTime(msg, this.id);
+    processNewTransferTime(msg, this.id);
     this.emitMessage(msg.data.flow, msg.data.message);
   }.bind(this, worker), true);
   this.stop = function() {
