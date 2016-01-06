@@ -161,8 +161,6 @@ WorkerLink.prototype.deliverMessage = function(flow, message) {
   } else {
     var now = getTime();
     if (this.obj) {
-      var idString = now.toString();
-      var id = idString.substr(idString.length - 6);
       this.obj.postMessage({
         flow: flow,
         message: message,
